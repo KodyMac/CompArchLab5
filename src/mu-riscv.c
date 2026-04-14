@@ -636,10 +636,48 @@ void EX()
         case STORE_OPCODE:
             EX_MEM.ALUOutput = operandA + ID_EX.imm; // Address calculation
             break;
+		case BRANCH_OPCODE: {
+			bool taken = false;
+			switch(funct3) {
+				case 0x0: taken = (operandA == operandB); break;  // beq
+				case 0x1: taken = (operandA != operandB); break;  // bne
+				case 0x4: taken = ((int32_t)operandA < (int32_t)operandB); break; // blt
+				case 0x5: taken = ((int32_t)operandA >= (int32_t)operandB); break; // bge
+				// Add bltu, bgeu...
+			}
+			if (taken) {
+				// 1. Calculate Target
+				uint32_t target_PC = ID_EX.PC + ID_EX.imm;
+				
+				// 2. Update PC
+				CURRENT_STATE.PC = target_PC;
+				
+				// 3. FLUSH the pipeline (Control Hazard Logic)
+				// Set the previous stage to NOP so the fall-through instruction isn't executed
+				IF_ID.IR = 0; 
+			}
+			EX_MEM.ALUOutput = 0; // Branches don't write back
+			break;
+		}
+		case JUMP_OPCODE: {
+			// Calculate Target
+			uint32_t target_PC = ID_EX.PC + ID_EX.imm;
+			
+			// Update PC
+			CURRENT_STATE.PC = target_PC;
+			
+			// FLUSH the pipeline
+			IF_ID.IR = 0; 
+			break;
+		}
         default:
             EX_MEM.ALUOutput = 0;
             break;
     }
+
+
+
+
 }
 
 void ID()
@@ -748,9 +786,30 @@ void ID()
             ID_EX.imm = imm;
             break;
         }
-        case BRANCH_OPCODE:
+        case BRANCH_OPCODE: {
+			// Decode the B-type immediate
+			uint32_t imm12 = (IF_ID.IR >> 31) & 0x1;
+			uint32_t imm10_5 = (IF_ID.IR >> 25) & 0x3F;
+			uint32_t imm4_1 = (IF_ID.IR >> 8) & 0xF;
+			uint32_t imm11 = (IF_ID.IR >> 7) & 0x1;
+			
+			int32_t imm = (imm12 << 12) | (imm11 << 11) | (imm10_5 << 5) | (imm4_1 << 1);
+			if (imm & 0x1000) imm |= 0xFFFFE000; // Sign extend
+			
+			rs1 = (IF_ID.IR >> 15) & BIT_MASK_5;
+			rs2 = (IF_ID.IR >> 20) & BIT_MASK_5;
+			
+			ID_EX.IR = IF_ID.IR;
+			ID_EX.PC = IF_ID.PC;
+			ID_EX.A = CURRENT_STATE.REGS[rs1];
+			ID_EX.B = CURRENT_STATE.REGS[rs2];
+			ID_EX.imm = imm;
+			break;
+		}
+
         case JUMP_OPCODE:
             ID_EX.IR = IF_ID.IR;
+			ID_EX.PC = IF_ID.PC;
             break;
         default:
             printf("Unknown command\n");
