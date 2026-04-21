@@ -643,7 +643,13 @@ void EX()
 				case 0x1: taken = (operandA != operandB); break;  // bne
 				case 0x4: taken = ((int32_t)operandA < (int32_t)operandB); break; // blt
 				case 0x5: taken = ((int32_t)operandA >= (int32_t)operandB); break; // bge
-				// Add bltu, bgeu...
+				case 0x6: taken = (operandA < operandB); break; //bltu
+				case 0x7: taken = (operandA >= operandB); break; //bgeu
+				case 0x8: taken = ((int32_t)operandA < 0); break; //blez
+				case 0x9: taken = ((int32_t)operandA <= 0); break; //bltz
+				case 0xA: taken = ((int32_t)operandA > 0); break; //bgez
+				case 0xB: taken = ((int32_t)operandA >= 0); break; //bgtz
+				
 			}
 			if (taken) {
 				// 1. Calculate Target
@@ -655,11 +661,13 @@ void EX()
 				// 3. FLUSH the pipeline (Control Hazard Logic)
 				// Set the previous stage to NOP so the fall-through instruction isn't executed
 				IF_ID.IR = 0; 
+				ID_EX.IR = 0;
 			}
 			EX_MEM.ALUOutput = 0; // Branches don't write back
 			break;
 		}
 		case JUMP_OPCODE: {
+			//J, JR, JAL, JALR
 			// Calculate Target
 			uint32_t target_PC = ID_EX.PC + ID_EX.imm;
 			
