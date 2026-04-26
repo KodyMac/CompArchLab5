@@ -484,6 +484,19 @@ void WB()
 		case STORE_OPCODE:
 			INSTRUCTION_COUNT++;
 			break;
+		case JUMP_OPCODE:
+		case 0x67: {
+			if (rd != 0)
+				CURRENT_STATE.REGS[rd] = MEM_WB.ALUOutput;
+			INSTRUCTION_COUNT++;
+			break;
+		}
+
+		case BRANCH_OPCODE: {
+			INSTRUCTION_COUNT++;
+			break;
+		}
+
 		default:
 			break;
 			
@@ -582,12 +595,16 @@ void EX()
         int exmem_regwrite = EX_MEM.IR &&
             (GET_OPCODE(EX_MEM.IR) == R_OPCODE ||
              GET_OPCODE(EX_MEM.IR) == IMM_ALU_OPCODE ||
-             GET_OPCODE(EX_MEM.IR) == LOAD_OPCODE);
+             GET_OPCODE(EX_MEM.IR) == LOAD_OPCODE ||
+			 GET_OPCODE(EX_MEM.IR) == JUMP_OPCODE ||
+			 GET_OPCODE(EX_MEM.IR) == 0x67);
 
         int memwb_regwrite = MEM_WB.IR &&
             (GET_OPCODE(MEM_WB.IR) == R_OPCODE ||
              GET_OPCODE(MEM_WB.IR) == IMM_ALU_OPCODE ||
-             GET_OPCODE(MEM_WB.IR) == LOAD_OPCODE);
+             GET_OPCODE(MEM_WB.IR) == LOAD_OPCODE ||
+			 GET_OPCODE(MEM_WB.IR) == JUMP_OPCODE ||
+			 GET_OPCODE(MEM_WB.IR) == 0x67);
 
         if (exmem_regwrite && exmem_rd != 0 && exmem_rd == id_ex_rs1)
             operandA = EX_MEM.ALUOutput;
@@ -645,10 +662,6 @@ void EX()
 				case 0x5: taken = ((int32_t)operandA >= (int32_t)operandB); break; // bge
 				case 0x6: taken = (operandA < operandB); break; //bltu
 				case 0x7: taken = (operandA >= operandB); break; //bgeu
-				case 0x8: taken = ((int32_t)operandA < 0); break; //blez
-				case 0x9: taken = ((int32_t)operandA <= 0); break; //bltz
-				case 0xA: taken = ((int32_t)operandA > 0); break; //bgez
-				case 0xB: taken = ((int32_t)operandA >= 0); break; //bgtz
 				
 			}
 			if (taken) {
@@ -667,17 +680,25 @@ void EX()
 			break;
 		}
 		case JUMP_OPCODE: {
-			//J, JR, JAL, JALR
-			// Calculate Target
-			uint32_t target_PC = ID_EX.PC + ID_EX.imm;
-			
-			// Update PC
-			CURRENT_STATE.PC = target_PC;
+
+			uint8_t rd = (ID_EX.IR >> 7) & 0x1F;
+			EX_MEM.ALUOutput = ID_EX.PC + 4;
+			CURRENT_STATE.PC = ID_EX.PC + ID_EX.imm;
 			
 			// FLUSH the pipeline
 			IF_ID.IR = 0; 
+			ID_EX.IR = 0;
 			break;
 		}
+
+		case 0x67: { //jalr
+			EX_MEM.ALUOutput = ID_EX.PC + 4;
+			CURRENT_STATE.PC = (operandA + ID_EX.imm) & ~1U;
+			IF_ID.IR = 0;
+			ID_EX.IR = 0;
+			break;
+		}
+
         default:
             EX_MEM.ALUOutput = 0;
             break;
@@ -739,6 +760,10 @@ void ID()
                 stall = 1;
         }
     }
+
+	if(opcode == BRANCH_OPCODE || opcode == JUMP_OPCODE || opcode == 0x67) {
+		bubble = true;
+	}
 
     if (stall) {
         ID_EX.IR = 0;
@@ -815,10 +840,30 @@ void ID()
 			break;
 		}
 
-        case JUMP_OPCODE:
-            ID_EX.IR = IF_ID.IR;
+        case JUMP_OPCODE: {
+			uint32_t imm20 = (IF_ID.IR >> 31) & 0x1;
+			uint32_t imm10_1 = (IF_ID.IR >> 21) & 0x3FF;
+			uint32_t imm11 = (IF_ID.IR >> 20) & 0x1;
+			uint32_t imm19_12= (IF_ID.IR >> 12) & 0xFF;
+			int32_t imm = (imm20 << 20) | (imm19_12 << 12) | (imm11 << 11) | (imm10_1 << 1);
+			if(imm & 0x100000) imm |= 0xFFE00000; //sign extend
+			ID_EX.IR = IF_ID.IR;
 			ID_EX.PC = IF_ID.PC;
+			ID_EX.imm = imm;
             break;
+		}
+		
+		case 0x67: { //JALR opcode
+			uint32_t imm = (IF_ID.IR >> 20) & BIT_MASK_12;
+			if(imm & 0x800) imm |= 0xFFFFF000;
+			uint8_t rs1 = (IF_ID.IR >> 15) & BIT_MASK_5;
+			ID_EX.IR = IF_ID.IR;
+			ID_EX.PC = IF_ID.PC;
+			ID_EX.A = CURRENT_STATE.REGS[rs1];
+			ID_EX.imm = imm;
+			break;
+		}
+
         default:
             printf("Unknown command\n");
             break;
