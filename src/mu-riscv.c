@@ -91,7 +91,21 @@ void control_hazard() {
             }
         }
     } else {
-        // CASE: Forwarding is OFF
+		if((rs1 != 0 && (rs1 == rd_ex || rs1 == rd_mem)) || (rs2 != 0 && (rs2 == rd_ex || rs2 == rd_mem))) {
+			hazard = true;
+		}
+	}
+	uint8_t opcode_id = GET_OPCODE(IF_ID.IR);
+	bool is_control = (opcode_id == BRANCH_OPCODE || opcode_id == JUMP_OPCODE || opcode_id == 0x67); //jalr
+
+	if (hazard || is_control) {
+		bubble = true;
+		//if stalling, ex should get nop next cycle. prevents control inst from moving too early
+	} else {
+		bubble = false;
+	}
+}
+       /* // CASE: Forwarding is OFF
         // Stall for ANY dependency in EX or MEM stages
         bool hazard_rs1 = (rs1 != 0) && ((rs1 == rd_ex) || (rs1 == rd_mem));
         bool hazard_rs2 = (rs2 != 0) && ((rs2 == rd_ex) || (rs2 == rd_mem));
@@ -107,7 +121,7 @@ void control_hazard() {
     } else {
         bubble = false;
     }
-}
+} */
 //forwarding function
 // Forwarding function
 void forward() {
@@ -449,6 +463,8 @@ void handle_pipeline()
 		ID();
 		IF();
 		
+	} else {
+		ID_EX.IR = 0; //creates stall to make sure EX gets NOP next cycle
 	}
 	bubble = false;
 	
@@ -674,20 +690,15 @@ void EX()
 				// 3. FLUSH the pipeline (Control Hazard Logic)
 				// Set the previous stage to NOP so the fall-through instruction isn't executed
 				IF_ID.IR = 0; 
-				ID_EX.IR = 0;
+				//ID_EX.IR = 0;
 			}
-			EX_MEM.ALUOutput = 0; // Branches don't write back
+			//EX_MEM.ALUOutput = 0; // Branches don't write back
 			break;
 		}
 		case JUMP_OPCODE: {
-
-			uint8_t rd = (ID_EX.IR >> 7) & 0x1F;
 			EX_MEM.ALUOutput = ID_EX.PC + 4;
 			CURRENT_STATE.PC = ID_EX.PC + ID_EX.imm;
-			
-			// FLUSH the pipeline
-			IF_ID.IR = 0; 
-			ID_EX.IR = 0;
+			IF_ID.IR = 0;
 			break;
 		}
 
@@ -695,7 +706,6 @@ void EX()
 			EX_MEM.ALUOutput = ID_EX.PC + 4;
 			CURRENT_STATE.PC = (operandA + ID_EX.imm) & ~1U;
 			IF_ID.IR = 0;
-			ID_EX.IR = 0;
 			break;
 		}
 
